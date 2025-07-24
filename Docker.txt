@@ -1,3 +1,14 @@
+# Use official Python base image
+FROM python:3.10-slim
+
+# Set workdir and copy requirements
+WORKDIR /app
+COPY requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy code
 import os
 import hashlib
 from datetime import datetime
@@ -15,17 +26,13 @@ FULLBAY_API_KEY = os.getenv("FULLBAY_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CLIENT_API_KEY = os.getenv("CLIENT_API_KEY")
 
-# Ensure all required keys are present
 if not (FULLBAY_API_KEY and OPENAI_API_KEY and CLIENT_API_KEY):
     raise RuntimeError("Missing one or more required environment variables: FULLBAY_API_KEY, OPENAI_API_KEY, CLIENT_API_KEY")
 
 # Configure OpenAI
-openai.api_key = OPENAI_API_KEY
+o penai.api_key = OPENAI_API_KEY
 
-# Initialize FastAPI app
 app = FastAPI()
-
-# Shared async HTTP client
 http_client = httpx.AsyncClient(timeout=10.0)
 
 class FullbayClient:
@@ -40,42 +47,22 @@ class FullbayClient:
     async def _refresh_token(self) -> None:
         today = datetime.utcnow().strftime("%Y-%m-%d")
         if self._token_date != today or not self._token:
-            # Fetch public IP once per day
             try:
                 resp = await http_client.get("https://api.ipify.org?format=text")
                 resp.raise_for_status()
                 self._ip = resp.text.strip()
             except httpx.RequestError as e:
                 raise RuntimeError(f"Failed to fetch public IP: {e}")
-            # Generate SHA1 token
             raw = f"{self.api_key}{today}{self._ip}"
             self._token = hashlib.sha1(raw.encode()).hexdigest()
             self._token_date = today
 
-    async def get_invoices(self, start_date: str, end_date: str) -> dict:
-        # Validate date format and range
-        try:
-            sd = datetime.strptime(start_date, "%Y-%m-%d")
-            ed = datetime.strptime(end_date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
-        if ed < sd:
-            raise HTTPException(status_code=400, detail="endDate must be on or after startDate.")
-        if (ed - sd).days > 7:
-            raise HTTPException(status_code=400, detail="Date range cannot exceed 7 days.")
-
-        # Ensure token is fresh
+    async def _fetch(self, endpoint: str, params: dict) -> dict:
         await self._refresh_token()
-
-        params = {
-            "key": self.api_key,
-            "token": self._token,
-            "startDate": start_date,
-            "endDate": end_date,
-        }
-        url = f"{self.BASE_URL}/getInvoices.php"
+        full_params = {"key": self.api_key, "token": self._token, **params}
+        url = f"{self.BASE_URL}/{endpoint}"
         try:
-            resp = await http_client.get(url, params=params)
+            resp = await http_client.get(url, params=full_params)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
@@ -83,13 +70,132 @@ class FullbayClient:
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"Network error contacting Fullbay API: {e}")
 
-# Instantiate client
+    async def get_adjustments(self, start_date: str, end_date: str) -> dict:
+        return await self._fetch("getAdjustments.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file0L27-L31
+
+    async def get_counter_sales(
+        self,
+        start_date: str,
+        end_date: str,
+        customer_unit_id: Optional[int] = None,
+        customer_title: Optional[str] = None,
+        unit_number: Optional[str] = None,
+        unit_nickname: Optional[str] = None,
+        unit_identifier: Optional[str] = None,
+        license_plate: Optional[str] = None,
+    ) -> dict:
+        params = {"startDate": start_date, "endDate": end_date}
+        if customer_unit_id:
+            params["customerUnitId"] = customer_unit_id
+        elif customer_title:
+            params["customerTitle"] = customer_title
+            if unit_number: params["unitNumber"] = unit_number
+            if unit_nickname: params["unitNickname"] = unit_nickname
+            if unit_identifier: params["unitIdentifier"] = unit_identifier
+            if license_plate: params["licensePlate"] = license_plate
+        return await self._fetch("getCounterSales.php", params)  # fileciteturn3file0L24-L29
+
+    async def get_customer_credits(self, start_date: str, end_date: str) -> dict:
+        return await self._fetch("getCustomerCredits.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file0L43-L49
+
+    async def get_customer_payments(self, start_date: str, end_date: str) -> dict:
+        return await self._fetch("getCustomerPayments.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file6L28-L33
+
+    async def get_invoices(self, start_date: str, end_date: str) -> dict:
+        return await self._fetch("getInvoices.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file6L7-L13
+
+    async def get_vendor_bills(self, start_date: str, end_date: str) -> dict:
+        return await self._fetch("getVendorBills.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file3L11-L15
+
+    async def get_vendor_credits(self, start_date: str, end_date: str) -> dict:
+        return await self._fetch("getVendorCredits.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file3L32-L36
+
+    async def get_customer_unit(
+        self,
+        customer_unit_id: Optional[int] = None,
+        customer_title: Optional[str] = None,
+        unit_number: Optional[str] = None,
+        unit_nickname: Optional[str] = None,
+        unit_identifier: Optional[str] = None,
+        license_plate: Optional[str] = None,
+    ) -> dict:
+        params = {}
+        if customer_unit_id:
+            params["customerUnitId"] = customer_unit_id
+        elif customer_title:
+            params["customerTitle"] = customer_title
+            if unit_number: params["unitNumber"] = unit_number
+            if unit_nickname: params["unitNickname"] = unit_nickname
+            if unit_identifier: params["unitIdentifier"] = unit_identifier
+            if license_plate: params["licensePlate"] = license_plate
+        else:
+            raise HTTPException(status_code=400, detail="Must provide customer_unit_id or customer_title and unit filter.")
+        return await self._fetch("getCustomerUnit.php", params)  # fileciteturn3file9L7-L13
+
 fullbay_client = FullbayClient(FULLBAY_API_KEY)
 
-# Dependency for verifying client API key header
+# Dependency for securing endpoints
 def verify_client_key(x_api_key: str = Header(...)):
     if x_api_key != CLIENT_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing client API key.")
+
+# Helper date validation
+def validate_date_range(start_date: str, end_date: str):
+    try:
+        sd = datetime.strptime(start_date, "%Y-%m-%d")
+        ed = datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
+    if ed < sd:
+        raise HTTPException(status_code=400, detail="endDate must be on or after startDate.")
+    if (ed - sd).days > 7:
+        raise HTTPException(status_code=400, detail="Date range cannot exceed 7 days.")
+
+# Routes for documented endpoints
+@app.get("/adjustments")
+async def adjustments(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    _auth: None = Depends(verify_client_key),
+):
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_adjustments(start_date, end_date)
+
+@app.get("/counter-sales")
+async def counter_sales(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    customer_unit_id: Optional[int] = Query(None, alias="customerUnitId"),
+    customer_title: Optional[str] = Query(None, alias="customerTitle"),
+    unit_number: Optional[str] = Query(None, alias="unitNumber"),
+    unit_nickname: Optional[str] = Query(None, alias="unitNickname"),
+    unit_identifier: Optional[str] = Query(None, alias="unitIdentifier"),
+    license_plate: Optional[str] = Query(None, alias="licensePlate"),
+    _auth: None = Depends(verify_client_key),
+):
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_counter_sales(
+        start_date, end_date, customer_unit_id, customer_title,
+        unit_number, unit_nickname, unit_identifier, license_plate
+    )
+
+@app.get("/customer-credits")
+async def customer_credits(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    _auth: None = Depends(verify_client_key),
+):
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_customer_credits(start_date, end_date)
+
+@app.get("/customer-payments")
+async def customer_payments(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    _auth: None = Depends(verify_client_key),
+):
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_customer_payments(start_date, end_date)
 
 @app.get("/invoices")
 async def invoices(
@@ -97,22 +203,44 @@ async def invoices(
     end_date: str = Query(..., alias="endDate"),
     _auth: None = Depends(verify_client_key),
 ):
-    # Fetch invoices from Fullbay
-    data = await fullbay_client.get_invoices(start_date, end_date)
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_invoices(start_date, end_date)
 
-    # Optionally summarize with OpenAI
-    summary: Optional[str] = None
-    try:
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Summarize the following invoice data."},
-                {"role": "user", "content": str(data)},
-            ],
-            max_tokens=150,
-        )
-        summary = resp.choices[0].message.content
-    except Exception:
-        summary = None
+@app.get("/vendor-bills")
+async def vendor_bills(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    _auth: None = Depends(verify_client_key),
+):
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_vendor_bills(start_date, end_date)
 
-    return {"invoices": data, "summary": summary}
+@app.get("/vendor-credits")
+async def vendor_credits(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    _auth: None = Depends(verify_client_key),
+):
+    validate_date_range(start_date, end_date)
+    return await fullbay_client.get_vendor_credits(start_date, end_date)
+
+@app.get("/customer-unit")
+async def customer_unit(
+    customer_unit_id: Optional[int] = Query(None, alias="customerUnitId"),
+    customer_title: Optional[str] = Query(None, alias="customerTitle"),
+    unit_number: Optional[str] = Query(None, alias="unitNumber"),
+    unit_nickname: Optional[str] = Query(None, alias="unitNickname"),
+    unit_identifier: Optional[str] = Query(None, alias="unitIdentifier"),
+    license_plate: Optional[str] = Query(None, alias="licensePlate"),
+    _auth: None = Depends(verify_client_key),
+):
+    return await fullbay_client.get_customer_unit(
+        customer_unit_id, customer_title, unit_number, unit_nickname, unit_identifier, license_plate
+    )
+
+# Expose port (App Platform uses $PORT)
+ENV PORT 8080
+EXPOSE $PORT
+
+# Start Uvicorn
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
