@@ -14,26 +14,28 @@ import hashlib
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query
+from fastapi import FastAPI, HTTPException, Query
 from dotenv import load_dotenv
 import httpx
 import openai
 
 # Load environment variables
-load_dotenv()  # expects FULLBAY_API_KEY, OPENAI_API_KEY, CLIENT_API_KEY
+load_dotenv()  # expects FULLBAY_API_KEY, OPENAI_API_KEY
 
 FULLBAY_API_KEY = os.getenv("FULLBAY_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-CLIENT_API_KEY = os.getenv("CLIENT_API_KEY")
 
-if not (FULLBAY_API_KEY and OPENAI_API_KEY and CLIENT_API_KEY):
-    raise RuntimeError("Missing one or more required environment variables: FULLBAY_API_KEY, OPENAI_API_KEY, CLIENT_API_KEY")
+if not (FULLBAY_API_KEY and OPENAI_API_KEY):
+    raise RuntimeError(
+        "Missing one or more required environment variables: FULLBAY_API_KEY, OPENAI_API_KEY"
+    )
 
 # Configure OpenAI
-o penai.api_key = OPENAI_API_KEY
+openai.api_key = OPENAI_API_KEY
 
 app = FastAPI()
 http_client = httpx.AsyncClient(timeout=10.0)
+
 
 class FullbayClient:
     BASE_URL = "https://app.fullbay.com/services"
@@ -66,12 +68,21 @@ class FullbayClient:
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Fullbay API error: {e.response.text}")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Fullbay API error: {e.response.text}"
+            )
         except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"Network error contacting Fullbay API: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Network error contacting Fullbay API: {e}"
+            )
 
     async def get_adjustments(self, start_date: str, end_date: str) -> dict:
-        return await self._fetch("getAdjustments.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file0L27-L31
+        return await self._fetch(
+            "getAdjustments.php",
+            {"startDate": start_date, "endDate": end_date}
+        )
 
     async def get_counter_sales(
         self,
@@ -89,26 +100,41 @@ class FullbayClient:
             params["customerUnitId"] = customer_unit_id
         elif customer_title:
             params["customerTitle"] = customer_title
-            if unit_number: params["unitNumber"] = unit_number
-            if unit_nickname: params["unitNickname"] = unit_nickname
-            if unit_identifier: params["unitIdentifier"] = unit_identifier
-            if license_plate: params["licensePlate"] = license_plate
-        return await self._fetch("getCounterSales.php", params)  # fileciteturn3file0L24-L29
+            if unit_number:    params["unitNumber"]    = unit_number
+            if unit_nickname:  params["unitNickname"]  = unit_nickname
+            if unit_identifier:params["unitIdentifier"]= unit_identifier
+            if license_plate:  params["licensePlate"]  = license_plate
+        return await self._fetch("getCounterSales.php", params)
 
     async def get_customer_credits(self, start_date: str, end_date: str) -> dict:
-        return await self._fetch("getCustomerCredits.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file0L43-L49
+        return await self._fetch(
+            "getCustomerCredits.php",
+            {"startDate": start_date, "endDate": end_date}
+        )
 
     async def get_customer_payments(self, start_date: str, end_date: str) -> dict:
-        return await self._fetch("getCustomerPayments.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file6L28-L33
+        return await self._fetch(
+            "getCustomerPayments.php",
+            {"startDate": start_date, "endDate": end_date}
+        )
 
     async def get_invoices(self, start_date: str, end_date: str) -> dict:
-        return await self._fetch("getInvoices.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file6L7-L13
+        return await self._fetch(
+            "getInvoices.php",
+            {"startDate": start_date, "endDate": end_date}
+        )
 
     async def get_vendor_bills(self, start_date: str, end_date: str) -> dict:
-        return await self._fetch("getVendorBills.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file3L11-L15
+        return await self._fetch(
+            "getVendorBills.php",
+            {"startDate": start_date, "endDate": end_date}
+        )
 
     async def get_vendor_credits(self, start_date: str, end_date: str) -> dict:
-        return await self._fetch("getVendorCredits.php", {"startDate": start_date, "endDate": end_date})  # fileciteturn3file3L32-L36
+        return await self._fetch(
+            "getVendorCredits.php",
+            {"startDate": start_date, "endDate": end_date}
+        )
 
     async def get_customer_unit(
         self,
@@ -116,127 +142,7 @@ class FullbayClient:
         customer_title: Optional[str] = None,
         unit_number: Optional[str] = None,
         unit_nickname: Optional[str] = None,
-        unit_identifier: Optional[str] = None,
-        license_plate: Optional[str] = None,
-    ) -> dict:
-        params = {}
-        if customer_unit_id:
-            params["customerUnitId"] = customer_unit_id
-        elif customer_title:
-            params["customerTitle"] = customer_title
-            if unit_number: params["unitNumber"] = unit_number
-            if unit_nickname: params["unitNickname"] = unit_nickname
-            if unit_identifier: params["unitIdentifier"] = unit_identifier
-            if license_plate: params["licensePlate"] = license_plate
-        else:
-            raise HTTPException(status_code=400, detail="Must provide customer_unit_id or customer_title and unit filter.")
-        return await self._fetch("getCustomerUnit.php", params)  # fileciteturn3file9L7-L13
-
-fullbay_client = FullbayClient(FULLBAY_API_KEY)
-
-# Dependency for securing endpoints
-def verify_client_key(x_api_key: str = Header(...)):
-    if x_api_key != CLIENT_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing client API key.")
-
-# Helper date validation
-def validate_date_range(start_date: str, end_date: str):
-    try:
-        sd = datetime.strptime(start_date, "%Y-%m-%d")
-        ed = datetime.strptime(end_date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
-    if ed < sd:
-        raise HTTPException(status_code=400, detail="endDate must be on or after startDate.")
-    if (ed - sd).days > 7:
-        raise HTTPException(status_code=400, detail="Date range cannot exceed 7 days.")
-
-# Routes for documented endpoints
-@app.get("/adjustments")
-async def adjustments(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_adjustments(start_date, end_date)
-
-@app.get("/counter-sales")
-async def counter_sales(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    customer_unit_id: Optional[int] = Query(None, alias="customerUnitId"),
-    customer_title: Optional[str] = Query(None, alias="customerTitle"),
-    unit_number: Optional[str] = Query(None, alias="unitNumber"),
-    unit_nickname: Optional[str] = Query(None, alias="unitNickname"),
-    unit_identifier: Optional[str] = Query(None, alias="unitIdentifier"),
-    license_plate: Optional[str] = Query(None, alias="licensePlate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_counter_sales(
-        start_date, end_date, customer_unit_id, customer_title,
-        unit_number, unit_nickname, unit_identifier, license_plate
-    )
-
-@app.get("/customer-credits")
-async def customer_credits(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_customer_credits(start_date, end_date)
-
-@app.get("/customer-payments")
-async def customer_payments(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_customer_payments(start_date, end_date)
-
-@app.get("/invoices")
-async def invoices(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_invoices(start_date, end_date)
-
-@app.get("/vendor-bills")
-async def vendor_bills(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_vendor_bills(start_date, end_date)
-
-@app.get("/vendor-credits")
-async def vendor_credits(
-    start_date: str = Query(..., alias="startDate"),
-    end_date: str = Query(..., alias="endDate"),
-    _auth: None = Depends(verify_client_key),
-):
-    validate_date_range(start_date, end_date)
-    return await fullbay_client.get_vendor_credits(start_date, end_date)
-
-@app.get("/customer-unit")
-async def customer_unit(
-    customer_unit_id: Optional[int] = Query(None, alias="customerUnitId"),
-    customer_title: Optional[str] = Query(None, alias="customerTitle"),
-    unit_number: Optional[str] = Query(None, alias="unitNumber"),
-    unit_nickname: Optional[str] = Query(None, alias="unitNickname"),
-    unit_identifier: Optional[str] = Query(None, alias="unitIdentifier"),
-    license_plate: Optional[str] = Query(None, alias="licensePlate"),
-    _auth: None = Depends(verify_client_key),
-):
-    return await fullbay_client.get_customer_unit(
-        customer_unit_id, customer_title, unit_number, unit_nickname, unit_identifier, license_plate
-    )
+        unit_identifier: Optional[str]_
 
 # Expose port (App Platform uses $PORT)
 ENV PORT 8080
