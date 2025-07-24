@@ -1,0 +1,118 @@
+import os
+import hashlib
+from datetime import datetime
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Depends, Header, Query
+from dotenv import load_dotenv
+import httpx
+import openai
+
+# Load environment variables
+load_dotenv()  # expects FULLBAY_API_KEY, OPENAI_API_KEY, CLIENT_API_KEY
+
+FULLBAY_API_KEY = os.getenv("FULLBAY_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CLIENT_API_KEY = os.getenv("CLIENT_API_KEY")
+
+# Ensure all required keys are present
+if not (FULLBAY_API_KEY and OPENAI_API_KEY and CLIENT_API_KEY):
+    raise RuntimeError("Missing one or more required environment variables: FULLBAY_API_KEY, OPENAI_API_KEY, CLIENT_API_KEY")
+
+# Configure OpenAI
+openai.api_key = OPENAI_API_KEY
+
+# Initialize FastAPI app
+app = FastAPI()
+
+# Shared async HTTP client
+http_client = httpx.AsyncClient(timeout=10.0)
+
+class FullbayClient:
+    BASE_URL = "https://app.fullbay.com/services"
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self._ip: Optional[str] = None
+        self._token: Optional[str] = None
+        self._token_date: Optional[str] = None
+
+    async def _refresh_token(self) -> None:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        if self._token_date != today or not self._token:
+            # Fetch public IP once per day
+            try:
+                resp = await http_client.get("https://api.ipify.org?format=text")
+                resp.raise_for_status()
+                self._ip = resp.text.strip()
+            except httpx.RequestError as e:
+                raise RuntimeError(f"Failed to fetch public IP: {e}")
+            # Generate SHA1 token
+            raw = f"{self.api_key}{today}{self._ip}"
+            self._token = hashlib.sha1(raw.encode()).hexdigest()
+            self._token_date = today
+
+    async def get_invoices(self, start_date: str, end_date: str) -> dict:
+        # Validate date format and range
+        try:
+            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            ed = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
+        if ed < sd:
+            raise HTTPException(status_code=400, detail="endDate must be on or after startDate.")
+        if (ed - sd).days > 7:
+            raise HTTPException(status_code=400, detail="Date range cannot exceed 7 days.")
+
+        # Ensure token is fresh
+        await self._refresh_token()
+
+        params = {
+            "key": self.api_key,
+            "token": self._token,
+            "startDate": start_date,
+            "endDate": end_date,
+        }
+        url = f"{self.BASE_URL}/getInvoices.php"
+        try:
+            resp = await http_client.get(url, params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=f"Fullbay API error: {e.response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Network error contacting Fullbay API: {e}")
+
+# Instantiate client
+fullbay_client = FullbayClient(FULLBAY_API_KEY)
+
+# Dependency for verifying client API key header
+def verify_client_key(x_api_key: str = Header(...)):
+    if x_api_key != CLIENT_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing client API key.")
+
+@app.get("/invoices")
+async def invoices(
+    start_date: str = Query(..., alias="startDate"),
+    end_date: str = Query(..., alias="endDate"),
+    _auth: None = Depends(verify_client_key),
+):
+    # Fetch invoices from Fullbay
+    data = await fullbay_client.get_invoices(start_date, end_date)
+
+    # Optionally summarize with OpenAI
+    summary: Optional[str] = None
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Summarize the following invoice data."},
+                {"role": "user", "content": str(data)},
+            ],
+            max_tokens=150,
+        )
+        summary = resp.choices[0].message.content
+    except Exception:
+        summary = None
+
+    return {"invoices": data, "summary": summary}
